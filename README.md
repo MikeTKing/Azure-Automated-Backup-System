@@ -111,6 +111,14 @@ CREATE TABLE dbo.BackupLog (
     Status NVARCHAR(50),
     Notes NVARCHAR(500)
 );
+
+INSERT INTO dbo.BackupLog (FileName, Status, Notes)
+VALUES 
+    ('backup-2026-05-29.json', 'Success', 'Initial test record'),
+    ('backup-2026-05-28.json', 'Success', 'Previous day record'),
+    ('backup-2026-05-27.json', 'Success', 'Two days ago record');
+
+SELECT * FROM dbo.BackupLog;
 ```
 
 ### 4. Logic App Workflow
