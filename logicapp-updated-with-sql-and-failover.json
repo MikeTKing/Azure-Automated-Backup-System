@@ -1,0 +1,156 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "$connections": {
+        "defaultValue": {},
+        "type": "Object"
+      }
+    },
+    "triggers": {
+      "Daily_Backup_Schedule": {
+        "type": "Recurrence",
+        "recurrence": {
+          "frequency": "Day",
+          "interval": 1,
+          "schedule": {
+            "hours": ["2"],
+            "minutes": [0]
+          },
+          "timeZone": "UTC"
+        }
+      }
+    },
+    "actions": {
+      "Initialize_Timestamp": {
+        "type": "InitializeVariable",
+        "inputs": {
+          "variables": [
+            {
+              "name": "BackupTimestamp",
+              "type": "string",
+              "value": "@{formatDateTime(utcNow(), 'yyyy-MM-dd_HH-mm-ss')}"
+            }
+          ]
+        },
+        "runAfter": {}
+      },
+
+      "Execute_SQL_Query": {
+        "type": "ApiConnection",
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['sql']['connectionId']"
+            }
+          },
+          "method": "post",
+          "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('default'))},@{encodeURIComponent(encodeURIComponent('default'))}/query/sql",
+          "body": {
+            "query": "SELECT * FROM dbo.YourTableName"
+          }
+        },
+        "runAfter": {
+          "Initialize_Timestamp": ["Succeeded"]
+        }
+      },
+
+      "Create_Backup_Blob": {
+        "type": "ApiConnection",
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['azureblob']['connectionId']"
+            }
+          },
+          "method": "post",
+          "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/files",
+          "queries": {
+            "folderPath": "/backups",
+            "name": "@{concat('backup-', variables('BackupTimestamp'), '.json')}",
+            "queryParametersSingleEncoded": true
+          },
+          "body": "@{body('Execute_SQL_Query')}"
+        },
+        "runAfter": {
+          "Execute_SQL_Query": ["Succeeded"]
+        },
+        "runtimeConfiguration": {
+          "contentTransfer": {
+            "transferMode": "Chunked"
+          }
+        }
+      },
+
+      "Send_Success_Email": {
+        "type": "ApiConnection",
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['office365']['connectionId']"
+            }
+          },
+          "method": "post",
+          "path": "/v2/Mail",
+          "body": {
+            "To": "michaelkingjr12@outlook.com",
+            "Subject": "@{concat('✅ Daily Backup Completed — ', variables('BackupTimestamp'))}",
+            "Body": "<html><body style='font-family:Segoe UI,sans-serif'><h2 style='color:#107c10'>✅ Backup Successful</h2><table style='border-collapse:collapse;width:100%;max-width:480px'><tr><td style='padding:8px;background:#f3f3f3;font-weight:bold'>Timestamp</td><td style='padding:8px'>@{variables('BackupTimestamp')} UTC</td></tr><tr><td style='padding:8px;background:#f3f3f3;font-weight:bold'>File</td><td style='padding:8px'>backup-@{variables('BackupTimestamp')}.json</td></tr><tr><td style='padding:8px;background:#f3f3f3;font-weight:bold'>Container</td><td style='padding:8px'>mikekingstorage1/backups</td></tr><tr><td style='padding:8px;background:#f3f3f3;font-weight:bold'>Source</td><td style='padding:8px'>Azure SQL export</td></tr></table></body></html>",
+            "IsHtml": true,
+            "Importance": "Normal"
+          }
+        },
+        "runAfter": {
+          "Create_Backup_Blob": ["Succeeded"]
+        }
+      },
+
+      "Send_Failure_Email": {
+        "type": "ApiConnection",
+        "inputs": {
+          "host": {
+            "connection": {
+              "name": "@parameters('$connections')['office365']['connectionId']"
+            }
+          },
+          "method": "post",
+          "path": "/v2/Mail",
+          "body": {
+            "To": "michaelkingjr12@outlook.com",
+            "Subject": "@{concat('❌ BACKUP FAILED — ', variables('BackupTimestamp'))}",
+            "Body": "<html><body style='font-family:Segoe UI,sans-serif'><h2 style='color:#d83b01'>❌ Backup Failed</h2><p>The automated backup job failed at <strong>@{variables('BackupTimestamp')} UTC</strong>.</p><h3>What failed:</h3><ul><li>SQL export result: @{result('Execute_SQL_Query')}</li><li>Blob write result: @{result('Create_Backup_Blob')}</li></ul><p><strong>Action required:</strong> Check the Logic App run history in the Azure Portal for full error details.</p><p style='color:#666;font-size:12px'>Logic App: daily-backup-confirmation<br>Storage: mikekingstorage1/backups</p></body></html>",
+            "IsHtml": true,
+            "Importance": "High"
+          }
+        },
+        "runAfter": {
+          "Create_Backup_Blob": ["Failed", "TimedOut", "Skipped"],
+          "Execute_SQL_Query": ["Failed", "TimedOut", "Skipped"]
+        }
+      }
+    },
+    "outputs": {}
+  },
+  "parameters": {
+    "$connections": {
+      "value": {
+        "azureblob": {
+          "connectionId": "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/BackupSystem-RG/providers/Microsoft.Web/connections/azureblob-connection",
+          "connectionName": "azureblob-connection",
+          "id": "/subscriptions/YOUR_SUBSCRIPTION_ID/providers/Microsoft.Web/locations/northcentralus/managedApis/azureblob"
+        },
+        "office365": {
+          "connectionId": "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/BackupSystem-RG/providers/Microsoft.Web/connections/office365-connection",
+          "connectionName": "office365-connection",
+          "id": "/subscriptions/YOUR_SUBSCRIPTION_ID/providers/Microsoft.Web/locations/northcentralus/managedApis/office365"
+        },
+        "sql": {
+          "connectionId": "/subscriptions/YOUR_SUBSCRIPTION_ID/resourceGroups/BackupSystem-RG/providers/Microsoft.Web/connections/sql-connection",
+          "connectionName": "sql-connection",
+          "id": "/subscriptions/YOUR_SUBSCRIPTION_ID/providers/Microsoft.Web/locations/northcentralus/managedApis/sql"
+        }
+      }
+    }
+  }
+}

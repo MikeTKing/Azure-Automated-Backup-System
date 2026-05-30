@@ -1,0 +1,251 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "logicAppName": {
+      "type": "string",
+      "defaultValue": "daily-backup-confirmation",
+      "metadata": { "description": "Name of the Logic App" }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": { "description": "Azure region for all resources" }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "metadata": { "description": "Name of the Azure Storage Account" }
+    },
+    "storageAccountKey": {
+      "type": "securestring",
+      "metadata": { "description": "Access key for the Storage Account" }
+    },
+    "blobContainerName": {
+      "type": "string",
+      "defaultValue": "backups",
+      "metadata": { "description": "Blob container where backups are stored" }
+    },
+    "notificationEmail": {
+      "type": "string",
+      "metadata": { "description": "Email address to receive backup confirmation/failure alerts" }
+    },
+    "backupTimeHour": {
+      "type": "int",
+      "defaultValue": 2,
+      "metadata": { "description": "Hour (UTC) at which backup runs daily (0–23)" }
+    }
+  },
+  "variables": {
+    "blobConnectionName": "azureblob-connection",
+    "office365ConnectionName": "office365-connection"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/connections",
+      "apiVersion": "2016-06-01",
+      "name": "[variables('blobConnectionName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "displayName": "Backup Storage Connection",
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/azureblob')]"
+        },
+        "parameterValues": {
+          "accountName": "[parameters('storageAccountName')]",
+          "accessKey": "[parameters('storageAccountKey')]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Web/connections",
+      "apiVersion": "2016-06-01",
+      "name": "[variables('office365ConnectionName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "displayName": "Office 365 Mail Connection",
+        "api": {
+          "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/office365')]"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('logicAppName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/connections', variables('blobConnectionName'))]",
+        "[resourceId('Microsoft.Web/connections', variables('office365ConnectionName'))]"
+      ],
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "Daily_Backup_Schedule": {
+              "type": "Recurrence",
+              "recurrence": {
+                "frequency": "Day",
+                "interval": 1,
+                "schedule": {
+                  "hours": ["[parameters('backupTimeHour')]"],
+                  "minutes": [0]
+                },
+                "timeZone": "UTC"
+              }
+            }
+          },
+          "actions": {
+            "Initialize_Timestamp": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "BackupTimestamp",
+                    "type": "string",
+                    "value": "@{formatDateTime(utcNow(), 'yyyy-MM-dd_HH-mm-ss')}"
+                  }
+                ]
+              },
+              "runAfter": {}
+            },
+            "Initialize_BlobName": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "BlobName",
+                    "type": "string",
+                    "value": "@{concat('backup-', variables('BackupTimestamp'), '.json')}"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Initialize_Timestamp": ["Succeeded"]
+              }
+            },
+            "Create_Backup_Payload": {
+              "type": "InitializeVariable",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "BackupPayload",
+                    "type": "string",
+                    "value": "@{concat('{\"backupDate\":\"', variables('BackupTimestamp'), '\",\"source\":\"automated-logic-app\",\"status\":\"initiated\"}')}"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Initialize_BlobName": ["Succeeded"]
+              }
+            },
+            "Upload_Backup_to_Blob": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azureblob']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/datasets/default/files",
+                "queries": {
+                  "folderPath": "[concat('/', parameters('blobContainerName'))]",
+                  "name": "@variables('BlobName')",
+                  "queryParametersSingleEncoded": true
+                },
+                "body": "@variables('BackupPayload')"
+              },
+              "runAfter": {
+                "Create_Backup_Payload": ["Succeeded"]
+              },
+              "runtimeConfiguration": {
+                "contentTransfer": {
+                  "transferMode": "Chunked"
+                }
+              }
+            },
+            "Send_Success_Email": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['office365']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/Mail",
+                "body": {
+                  "To": "[parameters('notificationEmail')]",
+                  "Subject": "@{concat('✅ Daily Backup Completed — ', variables('BackupTimestamp'))}",
+                  "Body": "<html><body style='font-family:Segoe UI,sans-serif;color:#1a1a1a'><h2 style='color:#107c10'>✅ Backup Successful</h2><table style='border-collapse:collapse;width:100%;max-width:480px'><tr><td style='padding:8px;background:#f3f3f3;font-weight:bold'>Timestamp</td><td style='padding:8px'>@{variables('BackupTimestamp')} UTC</td></tr><tr><td style='padding:8px;background:#f3f3f3;font-weight:bold'>Blob Name</td><td style='padding:8px'>@{variables('BlobName')}</td></tr><tr><td style='padding:8px;background:#f3f3f3;font-weight:bold'>Container</td><td style='padding:8px'>[parameters('blobContainerName')]</td></tr><tr><td style='padding:8px;background:#f3f3f3;font-weight:bold'>Storage Account</td><td style='padding:8px'>[parameters('storageAccountName')]</td></tr></table><p style='color:#666;font-size:12px;margin-top:24px'>This is an automated notification from your Azure Logic App backup system.</p></body></html>",
+                  "IsHtml": true,
+                  "Importance": "Normal"
+                }
+              },
+              "runAfter": {
+                "Upload_Backup_to_Blob": ["Succeeded"]
+              }
+            },
+            "Send_Failure_Email": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['office365']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/Mail",
+                "body": {
+                  "To": "[parameters('notificationEmail')]",
+                  "Subject": "@{concat('❌ Backup FAILED — ', variables('BackupTimestamp'))}",
+                  "Body": "<html><body style='font-family:Segoe UI,sans-serif;color:#1a1a1a'><h2 style='color:#d83b01'>❌ Backup Failed</h2><p>The daily backup job failed at <strong>@{variables('BackupTimestamp')} UTC</strong>.</p><p><strong>Action required:</strong> Please check the Logic App run history in the Azure Portal for error details.</p><p style='color:#666;font-size:12px;margin-top:24px'>Logic App: [parameters('logicAppName')]<br>Storage Account: [parameters('storageAccountName')]</p></body></html>",
+                  "IsHtml": true,
+                  "Importance": "High"
+                }
+              },
+              "runAfter": {
+                "Upload_Backup_to_Blob": ["Failed", "TimedOut", "Skipped"]
+              }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "azureblob": {
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('blobConnectionName'))]",
+                "connectionName": "[variables('blobConnectionName')]",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/azureblob')]"
+              },
+              "office365": {
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('office365ConnectionName'))]",
+                "connectionName": "[variables('office365ConnectionName')]",
+                "id": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/office365')]"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "logicAppResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Logic/workflows', parameters('logicAppName'))]"
+    },
+    "logicAppCallbackUrl": {
+      "type": "string",
+      "value": "[listCallbackUrl(resourceId('Microsoft.Logic/workflows', parameters('logicAppName')), '2019-05-01').value]"
+    }
+  }
+}

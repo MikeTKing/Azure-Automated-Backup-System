@@ -1,0 +1,130 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "storageAccountName": {
+      "type": "string",
+      "metadata": { "description": "Name of the existing Storage Account to apply the lifecycle policy to" }
+    },
+    "backupContainerPrefix": {
+      "type": "string",
+      "defaultValue": "backups/",
+      "metadata": { "description": "Blob path prefix to apply lifecycle rules to (e.g. 'backups/')" }
+    },
+    "coolTierAfterDays": {
+      "type": "int",
+      "defaultValue": 30,
+      "metadata": { "description": "Days after last modification before moving blob to Cool tier" }
+    },
+    "archiveTierAfterDays": {
+      "type": "int",
+      "defaultValue": 90,
+      "metadata": { "description": "Days after last modification before moving blob to Archive tier" }
+    },
+    "deleteAfterDays": {
+      "type": "int",
+      "defaultValue": 365,
+      "metadata": { "description": "Days after last modification before deleting the blob" }
+    },
+    "deleteVersionAfterDays": {
+      "type": "int",
+      "defaultValue": 180,
+      "metadata": { "description": "Days after version creation before deleting old blob versions" }
+    },
+    "deleteSnapshotAfterDays": {
+      "type": "int",
+      "defaultValue": 90,
+      "metadata": { "description": "Days after snapshot creation before deleting blob snapshots" }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts/managementPolicies",
+      "apiVersion": "2023-01-01",
+      "name": "[concat(parameters('storageAccountName'), '/default')]",
+      "properties": {
+        "policy": {
+          "rules": [
+            {
+              "name": "backup-tiering-and-expiry",
+              "enabled": true,
+              "type": "Lifecycle",
+              "definition": {
+                "filters": {
+                  "blobTypes": ["blockBlob"],
+                  "prefixMatch": ["[parameters('backupContainerPrefix')]"]
+                },
+                "actions": {
+                  "baseBlob": {
+                    "tierToCool": {
+                      "daysAfterModificationGreaterThan": "[parameters('coolTierAfterDays')]"
+                    },
+                    "tierToArchive": {
+                      "daysAfterModificationGreaterThan": "[parameters('archiveTierAfterDays')]"
+                    },
+                    "delete": {
+                      "daysAfterModificationGreaterThan": "[parameters('deleteAfterDays')]"
+                    }
+                  },
+                  "version": {
+                    "tierToCool": {
+                      "daysAfterCreationGreaterThan": 30
+                    },
+                    "tierToArchive": {
+                      "daysAfterCreationGreaterThan": 90
+                    },
+                    "delete": {
+                      "daysAfterCreationGreaterThan": "[parameters('deleteVersionAfterDays')]"
+                    }
+                  },
+                  "snapshot": {
+                    "tierToCool": {
+                      "daysAfterCreationGreaterThan": 30
+                    },
+                    "delete": {
+                      "daysAfterCreationGreaterThan": "[parameters('deleteSnapshotAfterDays')]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "name": "delete-incomplete-uploads",
+              "enabled": true,
+              "type": "Lifecycle",
+              "definition": {
+                "filters": {
+                  "blobTypes": ["blockBlob"],
+                  "prefixMatch": ["[parameters('backupContainerPrefix')]"]
+                },
+                "actions": {
+                  "baseBlob": {
+                    "delete": {
+                      "daysAfterLastAccessTimeGreaterThan": 7
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "lifecyclePolicyId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Storage/storageAccounts/managementPolicies', parameters('storageAccountName'), 'default')]"
+    },
+    "policySummary": {
+      "type": "object",
+      "value": {
+        "coolTierAfterDays": "[parameters('coolTierAfterDays')]",
+        "archiveTierAfterDays": "[parameters('archiveTierAfterDays')]",
+        "deleteAfterDays": "[parameters('deleteAfterDays')]",
+        "deleteVersionAfterDays": "[parameters('deleteVersionAfterDays')]",
+        "deleteSnapshotAfterDays": "[parameters('deleteSnapshotAfterDays')]"
+      }
+    }
+  }
+}
