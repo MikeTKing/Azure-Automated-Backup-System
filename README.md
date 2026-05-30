@@ -47,6 +47,26 @@ Daily Trigger (Logic App - 2AM UTC)
 
 ---
 
+## 🛠️ Tools & Technologies
+
+**Microsoft Azure (cloud platform everything was built on)**
+
+| Tool | Purpose |
+|---|---|
+| **Azure Logic Apps** | The brain of the system — orchestrates the entire automated workflow on a daily schedule with no code required |
+| **Azure Blob Storage** | Cloud storage where backup files are saved each day in a private container |
+| **Azure SQL Server & Database** | Stores the data being backed up; hosts the `BackupLog` table |
+| **Azure Lifecycle Management** | Automatically moves old backups to cheaper storage tiers and deletes them after a year |
+| **Azure Firewall / Networking** | Configured to allow the Logic App to securely connect to SQL while blocking unauthorized access |
+| **Office 365 Outlook Connector** | Sends daily confirmation and failure alert emails from within the Logic App |
+| **Azure Resource Groups** | Organizes all resources together under `BackupSystem-RG` for easy management and cleanup |
+| **ARM Templates (JSON)** | Infrastructure as code — allows the entire system to be redeployed to any Azure environment with a single command |
+| **Azure Portal** | Web interface used to build, configure, and monitor everything |
+| **Azure Query Editor** | Used to create the SQL table and insert test data directly in the browser |
+| **GitHub** | Stores the project code, ARM templates, and documentation |
+
+---
+
 ## ☁️ Azure Resources
 
 | Resource | Name | Purpose |
@@ -91,14 +111,6 @@ CREATE TABLE dbo.BackupLog (
     Status NVARCHAR(50),
     Notes NVARCHAR(500)
 );
-
-INSERT INTO dbo.BackupLog (FileName, Status, Notes)
-VALUES 
-    ('backup-2026-05-29.json', 'Success', 'Initial test record'),
-    ('backup-2026-05-28.json', 'Success', 'Previous day record'),
-    ('backup-2026-05-27.json', 'Success', 'Two days ago record');
-
-SELECT * FROM dbo.BackupLog;
 ```
 
 ### 4. Logic App Workflow
